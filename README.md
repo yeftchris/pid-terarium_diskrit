@@ -1,66 +1,68 @@
 # Terrarium Humidity PID
 
-Discrete PID humidity control for a terrarium, using PWM-driven dual fans, a DHT11 sensor, and IRLZ44N MOSFETs on a [microcontroller: Arduino Uno / ESP32 / etc.].
+Discrete-time PI(D) humidity controller for a terrarium. An Arduino reads relative humidity from a DHT11 sensor and drives an intake fan and an exhaust fan in opposite directions around a balance point, using PWM.
 
 ![Demo](docs/images/demo.gif)
 
 ## Overview
 
-This project keeps the relative humidity inside a terrarium at a desired setpoint. A DHT11 sensor measures the humidity, a discrete-time PID controller computes the control effort every sampling period, and the result is applied as a PWM duty cycle to two fans through logic-level MOSFETs. The fans exchange air with the surroundings to bring humidity toward the setpoint.
+The controller holds the terrarium humidity at a setpoint of 70 %RH. Every second, the Arduino measures humidity, computes a discrete PID output, and shifts PWM between two fans: when humidity is below the setpoint, the intake fan speeds up and the exhaust fan slows down, and the opposite happens when humidity is above the setpoint. Because both fans move around a common balance duty cycle, the airflow is regulated without ever switching the fans fully off.
 
-The goal of the project is to apply a discrete PID controller on a real, slow, noisy system and to document the practical issues that come with it, such as sensor resolution, sampling time selection, actuator saturation, and integral windup.
-
-## System Description
-
-The plant is the terrarium air volume, with relative humidity as the process variable. The sensor is a DHT11 (resolution of 1 %RH, update rate of about 1 Hz). The actuators are two fans driven by PWM through IRLZ44N MOSFETs, and the controller runs on [microcontroller] at a sampling time of [Ts] seconds. The humidity setpoint is [setpoint] %RH.
+The project documents the practical side of discrete control on a slow, noisy system: sampling time, sensor resolution, actuator saturation, and integral windup.
 
 ## Hardware
 
 | Component | Qty | Notes |
 |---|---|---|
-| [Microcontroller] | 1 | |
-| DHT11 humidity sensor | 1 | |
-| IRLZ44N N-channel MOSFET | 2 | One per fan |
-| [Fan type, voltage] | 2 | |
+| Arduino [board type] | 1 | PWM on pins 9 and 10 |
+| DHT11 humidity sensor | 1 | Data pin on D2 |
+| IRLZ44N N-channel MOSFET | 2 | One per fan, gate driven by PWM |
+| Fan [voltage / size] | 2 | Intake (D9) and exhaust (D10) |
 | [Power supply] | 1 | |
-| Flyback diode, gate resistor, pull-down resistor | | [values] |
 
 Wiring diagram: see `hardware/schematic.png`.
 
-## Controller Design
+## Control Algorithm
 
-The continuous PID law is
+The error is defined as e[k] = SP - RH[k], so a positive error means the terrarium is too dry.
 
-    u(t) = Kp*e(t) + Ki*integral(e(t) dt) + Kd*de(t)/dt
+Discrete terms, with sampling time Ts = 1 s:
 
-and it is discretized with [backward Euler / Tustin / forward Euler] at sampling time Ts. The resulting difference equation implemented in firmware is
+    I[k] = I[k-1] + e[k] * Ts          (rectangular integration)
+    D[k] = (e[k] - e[k-1]) / Ts        (backward difference)
+    u[k] = Kp*e[k] + Ki*I[k] + Kd*D[k]
 
-    e[k]  = setpoint - humidity[k]
-    I[k]  = I[k-1] + Ki*Ts*e[k]
-    D[k]  = Kd*(e[k] - e[k-1])/Ts        (or derivative on measurement)
-    u[k]  = Kp*e[k] + I[k] + D[k]
+Balancing output to the two fans:
 
-Implementation details:
+    PWM_intake[k]  = PWM_BALANCE + u[k]
+    PWM_exhaust[k] = PWM_BALANCE - u[k]
 
-- Output saturation: u[k] is limited to [0, 255] (or your PWM range).
-- Anti-windup: [clamping / back-calculation] on the integral term.
-- Derivative term: [derivative on measurement / low-pass filter, if used] to reduce noise and avoid derivative kick.
-- Sampling time: Ts = [value] s, chosen because [reason, e.g. DHT11 update rate and the slow humidity dynamics].
+Both are clamped to the range 0 to 255.
 
-## Tuning
+Implementation notes:
 
-Method: [Ziegler-Nichols / relay feedback / trial and error].
+- Sampling is done non-blocking with `millis()`, so the loop does not use `delay()`.
+- Integral anti-windup: the integral state is clamped to ±100.
+- If the DHT11 returns NaN, that sample is skipped and the previous output is kept.
+- Kd is set to 0, so in the current configuration the controller behaves as a PI controller. The derivative term is implemented and can be enabled for experiments.
+
+## Parameters
 
 | Parameter | Value |
 |---|---|
-| Kp | [ ] |
-| Ki | [ ] |
-| Kd | [ ] |
-| Ts | [ ] s |
+| Setpoint | 70 %RH |
+| Kp | 8.0 |
+| Ki | 0.08 |
+| Kd | 0.0 |
+| Ts | 1 s |
+| PWM balance | 80 |
+| Integral limit | ±100 |
+
+Tuning method: [Ziegler-Nichols / relay feedback / trial and error].
 
 ## Results
 
-Test conditions: [setpoint, initial humidity, ambient condition, duration].
+Test conditions: [initial humidity, ambient condition, duration].
 
 | Metric | Value |
 |---|---|
@@ -70,7 +72,11 @@ Test conditions: [setpoint, initial humidity, ambient condition, duration].
 
 ![Response plot](docs/images/response.png)
 
-[One or two sentences interpreting the result, including any limitation such as DHT11 accuracy of about ±5 %RH.]
+## Serial Output
+
+The firmware prints CSV at 9600 baud, which can be logged and plotted directly:
+
+    RH,SP,Error,PID,IntakePWM,ExhaustPWM
 
 ## Repository Structure
 
@@ -79,7 +85,7 @@ terrarium-humidity-pid/
 ├── README.md
 ├── LICENSE
 ├── firmware/
-│   └── terrarium_pid.ino
+│   └── PID_Diskrit_Terrarium.ino
 ├── hardware/
 │   └── schematic.png
 ├── data/
@@ -91,14 +97,15 @@ terrarium-humidity-pid/
 ## Getting Started
 
 1. Wire the circuit according to `hardware/schematic.png`.
-2. Install the required libraries: [DHT sensor library, etc.].
-3. Open `firmware/terrarium_pid.ino`, set the pin numbers and PID parameters at the top of the file.
-4. Upload to the board and open the serial monitor at [baud rate] baud.
+2. Install the DHT sensor library by Adafruit (and its Adafruit Unified Sensor dependency).
+3. Open `firmware/PID_Diskrit_Terrarium.ino` and adjust the setpoint and PID parameters at the top of the file.
+4. Upload to the Arduino and open the serial monitor at 9600 baud.
 
 ## Limitations and Future Work
 
-- The DHT11 has coarse resolution and limited accuracy; a DHT22 or SHT3x would improve control quality.
-- Fans can only reduce or exchange humidity, so there is no active humidification in the current design.
+- The DHT11 has 1 %RH resolution and roughly ±5 %RH accuracy; a DHT22 or SHT3x would improve control quality.
+- The anti-windup only clamps the integral state; conditional integration or back-calculation would be more robust.
+- Derivative on error can cause derivative kick if Kd is increased; derivative on measurement with a low-pass filter is a possible improvement.
 - Possible extensions: auto-tuning, a web-based dashboard, data logging.
 
 ## License
