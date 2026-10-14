@@ -89,7 +89,7 @@ terrarium-humidity-pid/
 ├── hardware/
 │   └── schema-hard.pdf
 ├── data/
-│   └── test_log.csv
+│   └── test_log.xlsx
 └── docs/
     └── images/
 ```
