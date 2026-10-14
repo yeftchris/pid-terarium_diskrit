@@ -87,7 +87,7 @@ terrarium-humidity-pid/
 ├── firmware/
 │   └── PID_Diskrit_Terrarium.ino
 ├── hardware/
-│   └── schematic.png
+│   └── schema-hard.pdf
 ├── data/
 │   └── test_log.csv
 └── docs/
